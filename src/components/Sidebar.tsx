@@ -44,10 +44,10 @@ function Sidebar() {
         <button
           className="nav-item"
           onClick={openChatWindow}
-          title={collapsed ? '聊天' : undefined}
+          title={collapsed ? '聊天查看' : undefined}
         >
           <span className="nav-icon"><MessageSquare size={20} /></span>
-          <span className="nav-label">聊天</span>
+          <span className="nav-label">聊天查看</span>
         </button>
 
         {/* 私聊分析 */}
@@ -84,10 +84,10 @@ function Sidebar() {
         <NavLink
           to="/export"
           className={`nav-item ${isActive('/export') ? 'active' : ''}`}
-          title={collapsed ? '导出' : undefined}
+          title={collapsed ? '导出数据' : undefined}
         >
           <span className="nav-icon"><Download size={20} /></span>
-          <span className="nav-label">导出</span>
+          <span className="nav-label">导出数据</span>
         </NavLink>
 
         {/* 数据管理 */}

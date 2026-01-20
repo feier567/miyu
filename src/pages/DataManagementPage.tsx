@@ -40,21 +40,42 @@ function DataManagementPage() {
   useEffect(() => {
     loadDatabases()
 
-    // 监听进度
-    const removeListener = window.electronAPI.dataManagement.onProgress((data) => {
+    // 监听进度（手动更新/解密时显示进度弹窗）
+    const removeProgressListener = window.electronAPI.dataManagement.onProgress(async (data) => {
       // 解密/更新进度 - 显示弹窗
       if (data.type === 'decrypt' || data.type === 'update') {
         setProgress(data)
         return
       }
       
-      // 完成/错误 - 清除弹窗
+      // 完成/错误 - 清除弹窗并刷新数据库列表
       if (data.type === 'complete' || data.type === 'error') {
         setProgress(null)
+        // 更新完成后自动刷新数据库列表（显示最新的解密状态和更新状态）
+        if (data.type === 'complete') {
+          await loadDatabases()
+        }
       }
     })
 
-    return () => removeListener()
+    // 监听自动更新完成事件（静默更新时不会发送进度事件，但会触发此事件）
+    // 注意：onUpdateAvailable 在更新完成时会传递 false
+    let lastUpdateState = false
+    const removeUpdateListener = window.electronAPI.dataManagement.onUpdateAvailable(async (hasUpdate) => {
+      // 当 hasUpdate 从 true 变为 false 时，表示更新完成
+      if (lastUpdateState && !hasUpdate) {
+        // 更新完成，延迟一点刷新，确保后端更新完成
+        setTimeout(async () => {
+          await loadDatabases()
+        }, 1000)
+      }
+      lastUpdateState = hasUpdate
+    })
+
+    return () => {
+      removeProgressListener()
+      removeUpdateListener()
+    }
   }, [loadDatabases])
 
   // 当路由变化到数据管理页面时，重新加载数据

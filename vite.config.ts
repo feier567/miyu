@@ -7,7 +7,7 @@ import { resolve } from 'path'
 export default defineConfig({
   base: './',
   server: {
-    port: 5173,
+    port: 3000,
     strictPort: false  // 如果3000被占用，自动尝试下一个
   },
   plugins: [
@@ -19,7 +19,7 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['better-sqlite3', 'koffi']
+              external: ['better-sqlite3', 'koffi', 'silk-wasm', 'sherpa-onnx-node']
             }
           }
         }
@@ -32,6 +32,18 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron'
+          }
+        }
+      },
+      {
+        // 语音转写 Worker 线程
+        entry: 'electron/transcribeWorker.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['sherpa-onnx-node']
+            }
           }
         }
       }

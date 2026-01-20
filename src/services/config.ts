@@ -13,7 +13,11 @@ export const CONFIG_KEYS = {
   IMAGE_AES_KEY: 'imageAesKey',
   CACHE_PATH: 'cachePath',
   EXPORT_PATH: 'exportPath',
-  AGREEMENT_VERSION: 'agreementVersion'
+  AGREEMENT_VERSION: 'agreementVersion',
+  STT_LANGUAGES: 'sttLanguages',
+  STT_MODEL_TYPE: 'sttModelType',
+  QUOTE_STYLE: 'quoteStyle',
+  SKIP_INTEGRITY_CHECK: 'skipIntegrityCheck'
 } as const
 
 // 当前协议版本 - 更新协议内容时递增此版本号
@@ -121,6 +125,29 @@ export async function setExportPath(path: string): Promise<void> {
 }
 
 
+// 获取 STT 支持语言
+export async function getSttLanguages(): Promise<string[]> {
+  const value = await config.get(CONFIG_KEYS.STT_LANGUAGES)
+  return (value as string[]) || []
+}
+
+// 设置 STT 支持语言
+export async function setSttLanguages(languages: string[]): Promise<void> {
+  await config.set(CONFIG_KEYS.STT_LANGUAGES, languages)
+}
+
+// 获取 STT 模型类型
+export async function getSttModelType(): Promise<'int8' | 'float32'> {
+  const value = await config.get(CONFIG_KEYS.STT_MODEL_TYPE)
+  return (value as 'int8' | 'float32') || 'int8'
+}
+
+// 设置 STT 模型类型
+export async function setSttModelType(type: 'int8' | 'float32'): Promise<void> {
+  await config.set(CONFIG_KEYS.STT_MODEL_TYPE, type)
+}
+
+
 // 获取用户同意的协议版本
 export async function getAgreementVersion(): Promise<number> {
   const value = await config.get(CONFIG_KEYS.AGREEMENT_VERSION)
@@ -141,4 +168,26 @@ export async function needShowAgreement(): Promise<boolean> {
 // 标记用户已同意当前版本协议
 export async function acceptCurrentAgreement(): Promise<void> {
   await setAgreementVersion(CURRENT_AGREEMENT_VERSION)
+}
+
+// 获取引用样式
+export async function getQuoteStyle(): Promise<'default' | 'wechat'> {
+  const value = await config.get(CONFIG_KEYS.QUOTE_STYLE)
+  return (value as 'default' | 'wechat') || 'default'
+}
+
+// 设置引用样式
+export async function setQuoteStyle(style: 'default' | 'wechat'): Promise<void> {
+  await config.set(CONFIG_KEYS.QUOTE_STYLE, style)
+}
+
+// 获取是否跳过完整性检查
+export async function getSkipIntegrityCheck(): Promise<boolean> {
+  const value = await config.get(CONFIG_KEYS.SKIP_INTEGRITY_CHECK)
+  return (value as boolean) || false
+}
+
+// 设置是否跳过完整性检查
+export async function setSkipIntegrityCheck(skip: boolean): Promise<void> {
+  await config.set(CONFIG_KEYS.SKIP_INTEGRITY_CHECK, skip)
 }

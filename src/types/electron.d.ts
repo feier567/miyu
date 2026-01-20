@@ -1,10 +1,12 @@
-import type { ChatSession, Message, Contact } from './models'
+import type { ChatSession, Message, Contact, ContactInfo } from './models'
 
 export interface ElectronAPI {
   window: {
     minimize: () => void
     maximize: () => void
     close: () => void
+    splashReady: () => void
+    onSplashFadeOut?: (callback: () => void) => () => void
     openChatWindow: () => Promise<boolean>
     openGroupAnalyticsWindow: () => Promise<boolean>
     openAnnualReportWindow: (year: number) => Promise<boolean>
@@ -13,6 +15,10 @@ export interface ElectronAPI {
     isChatWindowOpen: () => Promise<boolean>
     closeChatWindow: () => Promise<boolean>
     setTitleBarOverlay: (options: { symbolColor: string }) => void
+    openImageViewerWindow: (imagePath: string) => Promise<void>
+    openVideoPlayerWindow: (videoPath: string, videoWidth?: number, videoHeight?: number) => Promise<void>
+    openBrowserWindow: (url: string, title?: string) => Promise<void>
+    resizeToFitVideo: (videoWidth: number, videoHeight: number) => Promise<void>
   }
   config: {
     get: (key: string) => Promise<unknown>
@@ -42,6 +48,7 @@ export interface ElectronAPI {
     getVersion: () => Promise<string>
     checkForUpdates: () => Promise<{ hasUpdate: boolean; version?: string; releaseNotes?: string }>
     downloadAndInstall: () => Promise<void>
+    getStartupDbConnected?: () => Promise<boolean>
     onDownloadProgress: (callback: (progress: number) => void) => () => void
     onUpdateAvailable: (callback: (info: { version: string; releaseNotes: string }) => void) => () => void
   }
@@ -112,7 +119,20 @@ export interface ElectronAPI {
       outputPath?: string
       error?: string
     }>
+    checkForUpdates: () => Promise<{
+      hasUpdate: boolean
+      updateCount?: number
+      error?: string
+    }>
+    enableAutoUpdate: (intervalSeconds?: number) => Promise<{ success: boolean }>
+    disableAutoUpdate: () => Promise<{ success: boolean }>
+    autoIncrementalUpdate: (silent?: boolean) => Promise<{
+      success: boolean
+      updated: boolean
+      error?: string
+    }>
     onProgress: (callback: (data: DecryptProgress) => void) => () => void
+    onUpdateAvailable: (callback: (hasUpdate: boolean) => void) => () => void
   }
   imageDecrypt: {
     batchDetectXorKey: (dirPath: string) => Promise<{ success: boolean; key?: number | null; error?: string }>
@@ -151,16 +171,17 @@ export interface ElectronAPI {
   chat: {
     connect: () => Promise<{ success: boolean; error?: string }>
     getSessions: () => Promise<{ success: boolean; sessions?: ChatSession[]; error?: string }>
-    getMessages: (sessionId: string, offset?: number, limit?: number) => Promise<{ 
-      success: boolean; 
-      messages?: Message[]; 
-      hasMore?: boolean; 
-      error?: string 
+    getContacts: () => Promise<{ success: boolean; contacts?: ContactInfo[]; error?: string }>
+    getMessages: (sessionId: string, offset?: number, limit?: number) => Promise<{
+      success: boolean;
+      messages?: Message[];
+      hasMore?: boolean;
+      error?: string
     }>
     getContact: (username: string) => Promise<Contact | null>
     getContactAvatar: (username: string) => Promise<{ avatarUrl?: string; displayName?: string } | null>
     getMyAvatarUrl: () => Promise<{ success: boolean; avatarUrl?: string; error?: string }>
-    getMyUserInfo: () => Promise<{ 
+    getMyUserInfo: () => Promise<{
       success: boolean
       userInfo?: {
         wxid: string
@@ -168,9 +189,9 @@ export interface ElectronAPI {
         alias: string
         avatarUrl: string
       }
-      error?: string 
+      error?: string
     }>
-    downloadEmoji: (cdnUrl: string, md5?: string) => Promise<{ success: boolean; localPath?: string; error?: string }>
+    downloadEmoji: (cdnUrl: string, md5?: string, productId?: string, createTime?: number) => Promise<{ success: boolean; localPath?: string; error?: string }>
     close: () => Promise<boolean>
     refreshCache: () => Promise<boolean>
     getSessionDetail: (sessionId: string) => Promise<{
@@ -189,9 +210,14 @@ export interface ElectronAPI {
       }
       error?: string
     }>
+    getVoiceData: (sessionId: string, msgId: string, createTime?: number) => Promise<{
+      success: boolean
+      data?: string  // base64 encoded WAV
+      error?: string
+    }>
   }
   analytics: {
-    getOverallStatistics: () => Promise<{ 
+    getOverallStatistics: () => Promise<{
       success: boolean
       data?: {
         totalMessages: number
@@ -208,7 +234,7 @@ export interface ElectronAPI {
         activeDays: number
         messageTypeCounts: Record<number, number>
       }
-      error?: string 
+      error?: string
     }>
     getContactRankings: (limit?: number) => Promise<{
       success: boolean
@@ -347,6 +373,11 @@ export interface ElectronAPI {
       success: boolean
       error?: string
     }>
+    exportContacts: (outputDir: string, options: ContactExportOptions) => Promise<{
+      success: boolean
+      successCount?: number
+      error?: string
+    }>
   }
   activation: {
     getDeviceId: () => Promise<string>
@@ -360,8 +391,8 @@ export interface ElectronAPI {
     clearImages: () => Promise<{ success: boolean; error?: string }>
     clearAll: () => Promise<{ success: boolean; error?: string }>
     clearConfig: () => Promise<{ success: boolean; error?: string }>
-    getCacheSize: () => Promise<{ 
-      success: boolean; 
+    getCacheSize: () => Promise<{
+      success: boolean;
       error?: string;
       size?: {
         images: number
@@ -373,33 +404,72 @@ export interface ElectronAPI {
     }>
   }
   log: {
-    getLogFiles: () => Promise<{ 
-      success: boolean; 
+    getLogFiles: () => Promise<{
+      success: boolean;
       error?: string;
       files?: Array<{ name: string; size: number; mtime: Date }>
     }>
-    readLogFile: (filename: string) => Promise<{ 
-      success: boolean; 
+    readLogFile: (filename: string) => Promise<{
+      success: boolean;
       error?: string;
       content?: string
     }>
     clearLogs: () => Promise<{ success: boolean; error?: string }>
-    getLogSize: () => Promise<{ 
-      success: boolean; 
+    getLogSize: () => Promise<{
+      success: boolean;
       error?: string;
       size?: number
     }>
-    getLogDirectory: () => Promise<{ 
-      success: boolean; 
+    getLogDirectory: () => Promise<{
+      success: boolean;
       error?: string;
       directory?: string
     }>
     setLogLevel: (level: string) => Promise<{ success: boolean; error?: string }>
-    getLogLevel: () => Promise<{ 
-      success: boolean; 
+    getLogLevel: () => Promise<{
+      success: boolean;
       error?: string;
       level?: string
     }>
+  }
+  // 语音转文字 (STT)
+  stt: {
+    getModelStatus: () => Promise<{
+      success: boolean
+      exists?: boolean
+      modelPath?: string
+      tokensPath?: string
+      sizeBytes?: number
+      error?: string
+    }>
+    downloadModel: () => Promise<{
+      success: boolean
+      modelPath?: string
+      tokensPath?: string
+      error?: string
+    }>
+    transcribe: (wavBase64: string, sessionId: string, createTime: number, force?: boolean) => Promise<{
+      success: boolean
+      transcript?: string
+      cached?: boolean
+      error?: string
+    }>
+    onDownloadProgress: (callback: (progress: {
+      modelName: string
+      downloadedBytes: number
+      totalBytes?: number
+      percent?: number
+    }) => void) => () => void
+    onPartialResult: (callback: (text: string) => void) => () => void
+    getCachedTranscript: (sessionId: string, createTime: number) => Promise<{
+      success: boolean
+      transcript?: string
+    }>
+    updateTranscript: (sessionId: string, createTime: number, transcript: string) => Promise<{
+      success: boolean
+      error?: string
+    }>
+    clearModel: () => Promise<{ success: boolean; error?: string }>
   }
 }
 
@@ -408,6 +478,17 @@ export interface ExportOptions {
   dateRange?: { start: number; end: number } | null
   exportMedia?: boolean
   exportAvatars?: boolean
+}
+
+export interface ContactExportOptions {
+  format: 'json' | 'csv' | 'vcf'
+  exportAvatars: boolean
+  contactTypes: {
+    friends: boolean
+    groups: boolean
+    officials: boolean
+  }
+  selectedUsernames?: string[]
 }
 
 export interface DatabaseFileInfo {
@@ -462,7 +543,19 @@ declare global {
   interface Window {
     electronAPI: ElectronAPI
   }
-  
+
+  namespace JSX {
+    interface IntrinsicElements {
+      webview: React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
+        src?: string;
+        allowpopups?: boolean;
+        webpreferences?: string;
+        style?: React.CSSProperties;
+        ref?: any;
+      }
+    }
+  }
+
   // Electron 类型声明
   namespace Electron {
     interface OpenDialogOptions {
@@ -487,4 +580,4 @@ declare global {
   }
 }
 
-export {}
+export { }

@@ -23,6 +23,16 @@ export interface Contact {
   smallHeadUrl: string
 }
 
+// 通讯录联系人（用于导出）
+export interface ContactInfo {
+  username: string
+  displayName: string
+  remark?: string
+  nickname?: string
+  avatarUrl?: string
+  type: 'friend' | 'group' | 'official' | 'other'
+}
+
 // 消息
 export interface Message {
   localId: number
@@ -36,13 +46,14 @@ export interface Message {
   imageDatName?: string
   emojiCdnUrl?: string
   emojiMd5?: string
-  voiceDurationSeconds?: number
+  voiceDuration?: number  // 语音时长（秒）
   // 引用消息
   quotedContent?: string
   quotedSender?: string
   // 视频相关
   videoMd5?: string
   rawContent?: string
+  productId?: string
 }
 
 // 分析数据

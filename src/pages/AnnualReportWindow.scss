@@ -213,6 +213,18 @@
   font-weight: 600;
 }
 
+// 封面年份样式
+.cover-section {
+  .cover-year {
+    font-size: clamp(72px, 15vw, 120px);
+    font-weight: 900;
+    line-height: 1;
+    color: var(--ar-primary);
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+  }
+}
+
 .hero-title {
   font-size: clamp(28px, 5vw, 44px);
   font-weight: 700;
@@ -654,12 +666,14 @@
 }
 
 .ending-year {
-  font-size: 100px;
-  font-weight: 700;
-  color: var(--ar-primary);
-  opacity: 0.1;
+  font-size: 120px;
+  font-weight: 900;
+  color: transparent;
+  -webkit-text-stroke: 2px var(--ar-primary);
   margin-top: 30px;
   user-select: none;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0) 100%);
 }
 
 .ending-brand {

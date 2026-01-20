@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User } from 'lucide-react'
 import DateRangePicker from '../components/DateRangePicker'
+import { useTitleBarStore } from '../stores/titleBarStore'
 import * as configService from '../services/config'
 import './ExportPage.scss'
+
+type ExportTab = 'chat' | 'contacts'
 
 interface ChatSession {
   username: string
@@ -12,11 +15,31 @@ interface ChatSession {
   lastTimestamp: number
 }
 
+interface Contact {
+  username: string
+  displayName: string
+  remark?: string
+  nickname?: string
+  avatarUrl?: string
+  type: 'friend' | 'group' | 'official' | 'other'
+}
+
 interface ExportOptions {
   format: 'chatlab' | 'chatlab-jsonl' | 'json' | 'html' | 'txt' | 'excel' | 'sql'
   startDate: string
   endDate: string
   exportAvatars: boolean
+}
+
+interface ContactExportOptions {
+  format: 'json' | 'csv' | 'vcf'
+  exportAvatars: boolean
+  contactTypes: {
+    friends: boolean
+    groups: boolean
+    officials: boolean
+  }
+  selectedUsernames?: string[]
 }
 
 interface ExportResult {
@@ -27,6 +50,10 @@ interface ExportResult {
 }
 
 function ExportPage() {
+  const [activeTab, setActiveTab] = useState<ExportTab>('chat')
+  const setTitleBarContent = useTitleBarStore(state => state.setRightContent)
+
+  // 聊天导出状态
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [filteredSessions, setFilteredSessions] = useState<ChatSession[]>([])
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
@@ -36,7 +63,7 @@ function ExportPage() {
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState({ current: 0, total: 0, currentName: '' })
   const [exportResult, setExportResult] = useState<ExportResult | null>(null)
-  
+
   const [options, setOptions] = useState<ExportOptions>({
     format: 'chatlab',
     startDate: '',
@@ -44,6 +71,23 @@ function ExportPage() {
     exportAvatars: true
   })
 
+  // 通讯录导出状态
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [filteredContacts, setFilteredContacts] = useState<Contact[]>([])
+  const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set())
+  const [contactSearchKeyword, setContactSearchKeyword] = useState('')
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false)
+  const [contactOptions, setContactOptions] = useState<ContactExportOptions>({
+    format: 'json',
+    exportAvatars: true,
+    contactTypes: {
+      friends: true,
+      groups: false,
+      officials: false
+    }
+  })
+
+  // 加载聊天会话
   const loadSessions = useCallback(async () => {
     setIsLoading(true)
     try {
@@ -62,6 +106,28 @@ function ExportPage() {
       console.error('加载会话失败:', e)
     } finally {
       setIsLoading(false)
+    }
+  }, [])
+
+  // 加载通讯录
+  const loadContacts = useCallback(async () => {
+    setIsLoadingContacts(true)
+    try {
+      const result = await window.electronAPI.chat.connect()
+      if (!result.success) {
+        console.error('连接失败:', result.error)
+        setIsLoadingContacts(false)
+        return
+      }
+      const contactsResult = await window.electronAPI.chat.getContacts()
+      if (contactsResult.success && contactsResult.contacts) {
+        setContacts(contactsResult.contacts)
+        setFilteredContacts(contactsResult.contacts)
+      }
+    } catch (e) {
+      console.error('加载通讯录失败:', e)
+    } finally {
+      setIsLoadingContacts(false)
     }
   }, [])
 
@@ -84,6 +150,39 @@ function ExportPage() {
     loadExportPath()
   }, [loadSessions, loadExportPath])
 
+  // 切换到通讯录时加载
+  useEffect(() => {
+    if (activeTab === 'contacts' && contacts.length === 0) {
+      loadContacts()
+    }
+  }, [activeTab, contacts.length, loadContacts])
+
+  // 设置标题栏右侧内容
+  useEffect(() => {
+    setTitleBarContent(
+      <div className="export-tabs">
+        <button
+          className={`export-tab ${activeTab === 'chat' ? 'active' : ''}`}
+          onClick={() => setActiveTab('chat')}
+        >
+          <MessageSquare size={14} />
+          <span>聊天记录</span>
+        </button>
+        <button
+          className={`export-tab ${activeTab === 'contacts' ? 'active' : ''}`}
+          onClick={() => setActiveTab('contacts')}
+        >
+          <Users size={14} />
+          <span>通讯录</span>
+        </button>
+      </div>
+    )
+
+    // 离开页面时清除
+    return () => setTitleBarContent(null)
+  }, [activeTab, setTitleBarContent])
+
+  // 聊天会话搜索过滤
   useEffect(() => {
     if (!searchKeyword.trim()) {
       setFilteredSessions(sessions)
@@ -95,6 +194,31 @@ function ExportPage() {
       s.username.toLowerCase().includes(lower)
     ))
   }, [searchKeyword, sessions])
+
+  // 通讯录搜索过滤
+  useEffect(() => {
+    let filtered = contacts
+
+    // 类型过滤
+    filtered = filtered.filter(c => {
+      if (c.type === 'friend' && !contactOptions.contactTypes.friends) return false
+      if (c.type === 'group' && !contactOptions.contactTypes.groups) return false
+      if (c.type === 'official' && !contactOptions.contactTypes.officials) return false
+      return true
+    })
+
+    // 关键词过滤
+    if (contactSearchKeyword.trim()) {
+      const lower = contactSearchKeyword.toLowerCase()
+      filtered = filtered.filter(c =>
+        c.displayName?.toLowerCase().includes(lower) ||
+        c.remark?.toLowerCase().includes(lower) ||
+        c.username.toLowerCase().includes(lower)
+      )
+    }
+
+    setFilteredContacts(filtered)
+  }, [contactSearchKeyword, contacts, contactOptions.contactTypes])
 
   const toggleSession = (username: string) => {
     const newSet = new Set(selectedSessions)
@@ -114,6 +238,24 @@ function ExportPage() {
     }
   }
 
+  const toggleContact = (username: string) => {
+    const newSet = new Set(selectedContacts)
+    if (newSet.has(username)) {
+      newSet.delete(username)
+    } else {
+      newSet.add(username)
+    }
+    setSelectedContacts(newSet)
+  }
+
+  const toggleSelectAllContacts = () => {
+    if (selectedContacts.size === filteredContacts.length && filteredContacts.length > 0) {
+      setSelectedContacts(new Set())
+    } else {
+      setSelectedContacts(new Set(filteredContacts.map(c => c.username)))
+    }
+  }
+
   const getAvatarLetter = (name: string) => {
     if (!name) return '?'
     return [...name][0] || '?'
@@ -125,6 +267,25 @@ function ExportPage() {
     }
   }
 
+  // 选择导出文件夹
+  const selectExportFolder = async () => {
+    try {
+      const result = await window.electronAPI.dialog.openFile({
+        properties: ['openDirectory'],
+        title: '选择导出位置'
+      })
+      if (!result.canceled && result.filePaths.length > 0) {
+        const newPath = result.filePaths[0]
+        setExportFolder(newPath)
+        // 保存到配置
+        await configService.setExportPath(newPath)
+      }
+    } catch (e) {
+      console.error('选择文件夹失败:', e)
+    }
+  }
+
+  // 导出聊天记录
   const startExport = async () => {
     if (selectedSessions.size === 0 || !exportFolder) return
 
@@ -143,7 +304,7 @@ function ExportPage() {
         exportAvatars: options.exportAvatars
       }
 
-      if (options.format === 'chatlab' || options.format === 'chatlab-jsonl' || options.format === 'json') {
+      if (options.format === 'chatlab' || options.format === 'chatlab-jsonl' || options.format === 'json' || options.format === 'excel' || options.format === 'html') {
         const result = await window.electronAPI.export.exportSessions(
           sessionList,
           exportFolder,
@@ -161,7 +322,33 @@ function ExportPage() {
     }
   }
 
-  const formatOptions = [
+  // 导出通讯录
+  const startContactExport = async () => {
+    if (!exportFolder) return
+
+    setIsExporting(true)
+    setExportResult(null)
+
+    try {
+      const result = await window.electronAPI.export.exportContacts(
+        exportFolder,
+        {
+          format: contactOptions.format,
+          exportAvatars: contactOptions.exportAvatars,
+          contactTypes: contactOptions.contactTypes,
+          selectedUsernames: selectedContacts.size > 0 ? Array.from(selectedContacts) : undefined
+        }
+      )
+      setExportResult(result)
+    } catch (e) {
+      console.error('导出通讯录失败:', e)
+      setExportResult({ success: false, error: String(e) })
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  const chatFormatOptions = [
     { value: 'chatlab', label: 'ChatLab', icon: FileCode, desc: '标准格式，支持其他软件导入' },
     { value: 'chatlab-jsonl', label: 'ChatLab JSONL', icon: FileCode, desc: '流式格式，适合大量消息' },
     { value: 'json', label: 'JSON', icon: FileJson, desc: '详细格式，包含完整消息信息' },
@@ -171,155 +358,384 @@ function ExportPage() {
     { value: 'sql', label: 'PostgreSQL', icon: Database, desc: '数据库脚本，便于导入到数据库' }
   ]
 
+  const contactFormatOptions = [
+    { value: 'json', label: 'JSON', icon: FileJson, desc: '结构化数据，便于程序处理' },
+    { value: 'csv', label: 'CSV', icon: FileSpreadsheet, desc: '表格格式，可用Excel打开' },
+    { value: 'vcf', label: 'vCard', icon: User, desc: '通讯录标准格式，可导入手机' }
+  ]
+
+  const getContactTypeIcon = (type: string) => {
+    switch (type) {
+      case 'friend': return <User size={14} />
+      case 'group': return <Users size={14} />
+      case 'official': return <MessageSquare size={14} />
+      default: return <User size={14} />
+    }
+  }
+
+  const getContactTypeName = (type: string) => {
+    switch (type) {
+      case 'friend': return '好友'
+      case 'group': return '群聊'
+      case 'official': return '公众号'
+      default: return '其他'
+    }
+  }
+
   return (
     <div className="export-page">
-      <div className="session-panel">
-        <div className="panel-header">
-          <h2>选择会话</h2>
-          <button className="icon-btn" onClick={loadSessions} disabled={isLoading}>
-            <RefreshCw size={18} className={isLoading ? 'spin' : ''} />
-          </button>
-        </div>
+      {/* 聊天记录导出 */}
+      {activeTab === 'chat' && (
+        <>
+          <div className="session-panel">
+            <div className="panel-header">
+              <h2>选择会话</h2>
+              <button className="icon-btn" onClick={loadSessions} disabled={isLoading}>
+                <RefreshCw size={18} className={isLoading ? 'spin' : ''} />
+              </button>
+            </div>
 
-        <div className="search-bar">
-          <Search size={16} />
-          <input
-            type="text"
-            placeholder="搜索联系人或群组..."
-            value={searchKeyword}
-            onChange={e => setSearchKeyword(e.target.value)}
-          />
-          {searchKeyword && (
-            <button className="clear-btn" onClick={() => setSearchKeyword('')}>
-              <X size={14} />
-            </button>
-          )}
-        </div>
+            <div className="search-bar">
+              <Search size={16} />
+              <input
+                type="text"
+                placeholder="搜索联系人或群组..."
+                value={searchKeyword}
+                onChange={e => setSearchKeyword(e.target.value)}
+              />
+              {searchKeyword && (
+                <button className="clear-btn" onClick={() => setSearchKeyword('')}>
+                  <X size={14} />
+                </button>
+              )}
+            </div>
 
-        <div className="select-actions">
-          <button className="select-all-btn" onClick={toggleSelectAll}>
-            {selectedSessions.size === filteredSessions.length && filteredSessions.length > 0 ? '取消全选' : '全选'}
-          </button>
-          <span className="selected-count">已选 {selectedSessions.size} 个</span>
-        </div>
+            <div className="select-actions">
+              <button className="select-all-btn" onClick={toggleSelectAll}>
+                {selectedSessions.size === filteredSessions.length && filteredSessions.length > 0 ? '取消全选' : '全选'}
+              </button>
+              <span className="selected-count">已选 {selectedSessions.size} 个</span>
+            </div>
 
-        {isLoading ? (
-          <div className="loading-state">
-            <Loader2 size={24} className="spin" />
-            <span>加载中...</span>
+            {isLoading ? (
+              <div className="loading-state">
+                <Loader2 size={24} className="spin" />
+                <span>加载中...</span>
+              </div>
+            ) : filteredSessions.length === 0 ? (
+              <div className="empty-state">
+                <span>暂无会话</span>
+              </div>
+            ) : (
+              <div className="export-session-list">
+                {filteredSessions.map(session => (
+                  <div
+                    key={session.username}
+                    className={`export-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}
+                    onClick={() => toggleSession(session.username)}
+                  >
+                    <div className="check-box">
+                      {selectedSessions.has(session.username) && <Check size={14} />}
+                    </div>
+                    <div className="export-avatar">
+                      {session.avatarUrl ? (
+                        <img src={session.avatarUrl} alt="" />
+                      ) : (
+                        <span>{getAvatarLetter(session.displayName || session.username)}</span>
+                      )}
+                    </div>
+                    <div className="export-session-info">
+                      <div className="export-session-name">{session.displayName || session.username}</div>
+                      <div className="export-session-summary">{session.summary || '暂无消息'}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ) : filteredSessions.length === 0 ? (
-          <div className="empty-state">
-            <span>暂无会话</span>
-          </div>
-        ) : (
-          <div className="export-session-list">
-            {filteredSessions.map(session => (
-              <div
-                key={session.username}
-                className={`export-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}
-                onClick={() => toggleSession(session.username)}
-              >
-                <div className="check-box">
-                  {selectedSessions.has(session.username) && <Check size={14} />}
-                </div>
-                <div className="export-avatar">
-                  {session.avatarUrl ? (
-                    <img src={session.avatarUrl} alt="" />
-                  ) : (
-                    <span>{getAvatarLetter(session.displayName || session.username)}</span>
-                  )}
-                </div>
-                <div className="export-session-info">
-                  <div className="export-session-name">{session.displayName || session.username}</div>
-                  <div className="export-session-summary">{session.summary || '暂无消息'}</div>
+
+          <div className="settings-panel">
+            <div className="panel-header">
+              <h2>导出设置</h2>
+            </div>
+
+            <div className="settings-content">
+              <div className="setting-section">
+                <h3>导出格式</h3>
+                <div className="format-options">
+                  {chatFormatOptions.map(fmt => (
+                    <div
+                      key={fmt.value}
+                      className={`format-card ${options.format === fmt.value ? 'active' : ''}`}
+                      onClick={() => setOptions({ ...options, format: fmt.value as any })}
+                    >
+                      <fmt.icon size={24} />
+                      <span className="format-label">{fmt.label}</span>
+                      <span className="format-desc">{fmt.desc}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
 
-      <div className="settings-panel">
-        <div className="panel-header">
-          <h2>导出设置</h2>
-        </div>
-
-        <div className="settings-content">
-          <div className="setting-section">
-            <h3>导出格式</h3>
-            <div className="format-options">
-              {formatOptions.map(fmt => (
-                <div
-                  key={fmt.value}
-                  className={`format-card ${options.format === fmt.value ? 'active' : ''}`}
-                  onClick={() => setOptions({ ...options, format: fmt.value as any })}
-                >
-                  <fmt.icon size={24} />
-                  <span className="format-label">{fmt.label}</span>
-                  <span className="format-desc">{fmt.desc}</span>
+              <div className="setting-section">
+                <h3>时间范围</h3>
+                <div className="time-options">
+                  <DateRangePicker
+                    startDate={options.startDate}
+                    endDate={options.endDate}
+                    onStartDateChange={(date) => setOptions(prev => ({ ...prev, startDate: date }))}
+                    onEndDateChange={(date) => setOptions(prev => ({ ...prev, endDate: date }))}
+                  />
+                  <p className="time-hint">不选择时间范围则导出全部消息</p>
                 </div>
-              ))}
+              </div>
+
+              <div className="setting-section">
+                <h3>导出选项</h3>
+                <div className="export-options">
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.exportAvatars}
+                      onChange={e => setOptions(prev => ({ ...prev, exportAvatars: e.target.checked }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <span>导出头像</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="setting-section">
+                <h3>导出位置</h3>
+                <div className="export-path-select" onClick={selectExportFolder}>
+                  <FolderOpen size={16} />
+                  <span className="path-text">{exportFolder || '点击选择导出位置'}</span>
+                  <span className="change-text">更改</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="export-action">
+              <button
+                className="export-btn"
+                onClick={startExport}
+                disabled={selectedSessions.size === 0 || !exportFolder || isExporting}
+              >
+                {isExporting ? (
+                  <>
+                    <Loader2 size={18} className="spin" />
+                    <span>导出中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={18} />
+                    <span>开始导出</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
+        </>
+      )}
 
-          <div className="setting-section">
-            <h3>时间范围</h3>
-            <div className="time-options">
-              <DateRangePicker
-                startDate={options.startDate}
-                endDate={options.endDate}
-                onStartDateChange={(date) => setOptions(prev => ({ ...prev, startDate: date }))}
-                onEndDateChange={(date) => setOptions(prev => ({ ...prev, endDate: date }))}
+      {/* 通讯录导出 */}
+      {activeTab === 'contacts' && (
+        <>
+          <div className="session-panel contacts-panel">
+            <div className="panel-header">
+              <h2>通讯录预览</h2>
+              <button className="icon-btn" onClick={loadContacts} disabled={isLoadingContacts}>
+                <RefreshCw size={18} className={isLoadingContacts ? 'spin' : ''} />
+              </button>
+            </div>
+
+            <div className="search-bar">
+              <Search size={16} />
+              <input
+                type="text"
+                placeholder="搜索联系人..."
+                value={contactSearchKeyword}
+                onChange={e => setContactSearchKeyword(e.target.value)}
               />
-              <p className="time-hint">不选择时间范围则导出全部消息</p>
+              {contactSearchKeyword && (
+                <button className="clear-btn" onClick={() => setContactSearchKeyword('')}>
+                  <X size={14} />
+                </button>
+              )}
             </div>
-          </div>
 
-          <div className="setting-section">
-            <h3>导出选项</h3>
-            <div className="export-options">
-              <label className="checkbox-item">
-                <input
-                  type="checkbox"
-                  checked={options.exportAvatars}
-                  onChange={e => setOptions(prev => ({ ...prev, exportAvatars: e.target.checked }))}
-                />
-                <span>导出头像</span>
-              </label>
+            <div className="select-actions">
+              <button className="select-all-btn" onClick={toggleSelectAllContacts}>
+                {selectedContacts.size === filteredContacts.length && filteredContacts.length > 0 ? '取消全选' : '全选'}
+              </button>
+              <span className="selected-count">
+                {selectedContacts.size > 0 ? `已选 ${selectedContacts.size} 个` : `共 ${filteredContacts.length} 个联系人`}
+              </span>
             </div>
-          </div>
 
-          <div className="setting-section">
-            <h3>导出位置</h3>
-            <div className="export-path-display">
-              <FolderOpen size={16} />
-              <span>{exportFolder || '未设置'}</span>
-            </div>
-            <p className="path-hint">可在设置页面修改导出目录</p>
-          </div>
-        </div>
-
-        <div className="export-action">
-          <button
-            className="export-btn"
-            onClick={startExport}
-            disabled={selectedSessions.size === 0 || !exportFolder || isExporting}
-          >
-            {isExporting ? (
-              <>
-                <Loader2 size={18} className="spin" />
-                <span>导出中 ({exportProgress.current}/{exportProgress.total})</span>
-              </>
+            {isLoadingContacts ? (
+              <div className="loading-state">
+                <Loader2 size={24} className="spin" />
+                <span>加载中...</span>
+              </div>
+            ) : filteredContacts.length === 0 ? (
+              <div className="empty-state">
+                <span>暂无联系人</span>
+              </div>
             ) : (
-              <>
-                <Download size={18} />
-                <span>开始导出</span>
-              </>
+              <div className="contacts-list selectable">
+                {filteredContacts.slice(0, 100).map(contact => (
+                  <div
+                    key={contact.username}
+                    className={`contact-item ${selectedContacts.has(contact.username) ? 'selected' : ''}`}
+                    onClick={() => toggleContact(contact.username)}
+                  >
+                    <div className="check-box">
+                      {selectedContacts.has(contact.username) && <Check size={14} />}
+                    </div>
+                    <div className="contact-avatar">
+                      {contact.avatarUrl ? (
+                        <img src={contact.avatarUrl} alt="" />
+                      ) : (
+                        <span>{getAvatarLetter(contact.displayName)}</span>
+                      )}
+                    </div>
+                    <div className="contact-info">
+                      <div className="contact-name">{contact.displayName}</div>
+                      {contact.remark && contact.remark !== contact.displayName && (
+                        <div className="contact-remark">备注: {contact.remark}</div>
+                      )}
+                    </div>
+                    <div className={`contact-type ${contact.type}`}>
+                      {getContactTypeIcon(contact.type)}
+                      <span>{getContactTypeName(contact.type)}</span>
+                    </div>
+                  </div>
+                ))}
+                {filteredContacts.length > 100 && (
+                  <div className="contacts-more">
+                    还有 {filteredContacts.length - 100} 个联系人...
+                  </div>
+                )}
+              </div>
             )}
-          </button>
-        </div>
-      </div>
+          </div>
+
+          <div className="settings-panel">
+            <div className="panel-header">
+              <h2>导出设置</h2>
+            </div>
+
+            <div className="settings-content">
+              <div className="setting-section">
+                <h3>导出格式</h3>
+                <div className="format-options contact-formats">
+                  {contactFormatOptions.map(fmt => (
+                    <div
+                      key={fmt.value}
+                      className={`format-card ${contactOptions.format === fmt.value ? 'active' : ''}`}
+                      onClick={() => setContactOptions(prev => ({ ...prev, format: fmt.value as any }))}
+                    >
+                      <fmt.icon size={24} />
+                      <span className="format-label">{fmt.label}</span>
+                      <span className="format-desc">{fmt.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="setting-section">
+                <h3>联系人类型</h3>
+                <div className="export-options">
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={contactOptions.contactTypes.friends}
+                      onChange={e => setContactOptions(prev => ({
+                        ...prev,
+                        contactTypes: { ...prev.contactTypes, friends: e.target.checked }
+                      }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <User size={16} />
+                    <span>好友</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={contactOptions.contactTypes.groups}
+                      onChange={e => setContactOptions(prev => ({
+                        ...prev,
+                        contactTypes: { ...prev.contactTypes, groups: e.target.checked }
+                      }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <Users size={16} />
+                    <span>群聊</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={contactOptions.contactTypes.officials}
+                      onChange={e => setContactOptions(prev => ({
+                        ...prev,
+                        contactTypes: { ...prev.contactTypes, officials: e.target.checked }
+                      }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <MessageSquare size={16} />
+                    <span>公众号</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="setting-section">
+                <h3>导出选项</h3>
+                <div className="export-options">
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={contactOptions.exportAvatars}
+                      onChange={e => setContactOptions(prev => ({ ...prev, exportAvatars: e.target.checked }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <span>导出头像</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="setting-section">
+                <h3>导出位置</h3>
+                <div className="export-path-select" onClick={selectExportFolder}>
+                  <FolderOpen size={16} />
+                  <span className="path-text">{exportFolder || '点击选择导出位置'}</span>
+                  <span className="change-text">更改</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="export-action">
+              <button
+                className="export-btn"
+                onClick={startContactExport}
+                disabled={!exportFolder || isExporting}
+              >
+                {isExporting ? (
+                  <>
+                    <Loader2 size={18} className="spin" />
+                    <span>导出中...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={18} />
+                    <span>导出通讯录</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* 导出进度弹窗 */}
       {isExporting && (
@@ -329,14 +745,18 @@ function ExportPage() {
               <Loader2 size={32} className="spin" />
             </div>
             <h3>正在导出</h3>
-            <p className="progress-text">{exportProgress.currentName}</p>
-            <div className="progress-bar">
-              <div
-                className="progress-fill"
-                style={{ width: `${(exportProgress.current / exportProgress.total) * 100}%` }}
-              />
-            </div>
-            <p className="progress-count">{exportProgress.current} / {exportProgress.total}</p>
+            <p className="progress-text">{exportProgress.currentName || '准备中...'}</p>
+            {exportProgress.total > 0 && (
+              <>
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${(exportProgress.current / exportProgress.total) * 100}%` }}
+                  />
+                </div>
+                <p className="progress-count">{exportProgress.current} / {exportProgress.total}</p>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -351,7 +771,9 @@ function ExportPage() {
             <h3>{exportResult.success ? '导出完成' : '导出失败'}</h3>
             {exportResult.success ? (
               <p className="result-text">
-                成功导出 {exportResult.successCount} 个会话
+                {exportResult.successCount !== undefined
+                  ? `成功导出 ${exportResult.successCount} 个${activeTab === 'chat' ? '会话' : '联系人'}`
+                  : '导出成功'}
                 {exportResult.failCount ? `，${exportResult.failCount} 个失败` : ''}
               </p>
             ) : (

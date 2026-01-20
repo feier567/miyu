@@ -72,7 +72,7 @@ function AnalyticsPage() {
     ].filter(d => d.value > 0)
     return {
       tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-      series: [{ type: 'pie', radius: ['40%', '70%'], avoidLabelOverlap: false, itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 2 }, label: { show: true, formatter: '{b}\n{d}%' }, data }]
+      series: [{ type: 'pie', radius: ['40%', '70%'], avoidLabelOverlap: false, itemStyle: { borderRadius: 8 }, label: { show: true, formatter: '{b}\n{d}%' }, data }]
     }
   }
 

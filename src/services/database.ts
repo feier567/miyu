@@ -91,6 +91,7 @@ export async function getMessages(
     isSend: row.is_send != null ? Number(row.is_send) : null,
     senderUsername: row.sender_username ? String(row.sender_username) : null,
     parsedContent: parseMessageContent(row),
+    rawContent: String(row.message_content || row.compress_content || ''),
     imageMd5: extractImageMd5(row),
     emojiCdnUrl: extractEmojiCdnUrl(row),
     voiceDurationSeconds: extractVoiceDuration(row)
@@ -130,9 +131,51 @@ function parseMessageContent(row: Record<string, unknown>): string {
     case 43: return '[视频]'
     case 47: return '[表情]'
     case 48: return '[位置]'
-    case 10000: return '[系统消息]'
+    case 10000: return cleanSystemMessage(content)
     default: return content || `[消息类型:${localType}]`
   }
+}
+
+// 清理系统消息 / XML（尽量提取可读文本，兼容拍一拍）
+function cleanSystemMessage(content: string): string {
+  if (!content) return '[系统消息]'
+
+  // 1) 拍一拍：优先 title
+  const titleMatch = /<title>([\s\S]*?)<\/title>/i.exec(content)
+  if (titleMatch?.[1]) {
+    const title = titleMatch[1]
+      .replace(/<!\[CDATA\[/g, '')
+      .replace(/\]\]>/g, '')
+      .trim()
+    if (title) return title
+  }
+
+  // 2) 拍一拍：template（把 ${wxid_xxx} 这种占位符去掉）
+  const templateMatch = /<template>([\s\S]*?)<\/template>/i.exec(content)
+  if (templateMatch?.[1]) {
+    const t = templateMatch[1]
+      .replace(/<!\[CDATA\[/g, '')
+      .replace(/\]\]>/g, '')
+      .replace(/\$\{[^}]+\}/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (t) return t
+  }
+
+  // 3) 尝试提取 sysmsg/replacemsg（撤回等）
+  const replaceMsgMatch = /<replacemsg><!\[CDATA\[(.*?)\]\]><\/replacemsg>/i.exec(content)
+  if (replaceMsgMatch?.[1]) return replaceMsgMatch[1].trim()
+
+  // 4) 通用：去标签 + CDATA
+  const cleaned = content
+    .replace(/<!\[CDATA\[/g, '')
+    .replace(/\]\]>/g, '')
+    .replace(/<img[^>]*>/gi, '')
+    .replace(/<\/?[a-zA-Z0-9_:]+[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return cleaned || '[系统消息]'
 }
 
 // 提取图片 MD5

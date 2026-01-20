@@ -5,24 +5,36 @@ import { useThemeStore, themes } from '../stores/themeStore'
 import { useActivationStore } from '../stores/activationStore'
 import { dialog } from '../services/ipc'
 import * as configService from '../services/config'
-import { 
-  Eye, EyeOff, Key, FolderSearch, FolderOpen, Search, 
+import {
+  Eye, EyeOff, Key, FolderSearch, FolderOpen, Search,
   RotateCcw, Trash2, Save, Plug, X, Check, Sun, Moon,
-  Palette, Database, ImageIcon, Download, HardDrive, Info, RefreshCw, Shield, Clock, CheckCircle, AlertCircle, FileText
+  Palette, Database, ImageIcon, Download, HardDrive, Info, RefreshCw, Shield, Clock, CheckCircle, AlertCircle, FileText, Mic,
+  Zap, Layers
 } from 'lucide-react'
 import './SettingsPage.scss'
 
-type SettingsTab = 'appearance' | 'database' | 'image' | 'export' | 'cache' | 'logs' | 'activation' | 'about'
+type SettingsTab = 'appearance' | 'database' | 'stt' | 'data' | 'activation' | 'about'
 
 const tabs: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: 'appearance', label: '外观', icon: Palette },
-  { id: 'database', label: '数据库解密', icon: Database },
-  { id: 'image', label: '图片解密', icon: ImageIcon },
-  { id: 'export', label: '导出', icon: Download },
-  { id: 'cache', label: '缓存', icon: HardDrive },
-  { id: 'logs', label: '日志', icon: FileText },
+  { id: 'database', label: '数据解密', icon: Database },
+  { id: 'stt', label: '语音转文字', icon: Mic },
+  { id: 'data', label: '数据管理', icon: HardDrive },
   // { id: 'activation', label: '激活', icon: Shield },
   { id: 'about', label: '关于', icon: Info }
+]
+
+const sttLanguageOptions = [
+  { value: 'zh', label: '中文', enLabel: 'Chinese' },
+  { value: 'en', label: '英语', enLabel: 'English' },
+  { value: 'ja', label: '日语', enLabel: 'Japanese' },
+  { value: 'ko', label: '韩语', enLabel: 'Korean' },
+  { value: 'yue', label: '粤语', enLabel: 'Cantonese' }
+]
+
+const sttModelTypeOptions = [
+  { value: 'int8', label: 'int8 量化版', size: '235 MB', desc: '推荐，体积小、速度快' },
+  { value: 'float32', label: 'float32 完整版', size: '920 MB', desc: '更高精度，体积较大' }
 ]
 
 function SettingsPage() {
@@ -49,12 +61,15 @@ function SettingsPage() {
   const [decryptKey, setDecryptKey] = useState('')
   const [dbPath, setDbPath] = useState('')
   const [wxid, setWxid] = useState('')
+  const [wxidOptions, setWxidOptions] = useState<string[]>([])
+  const [showWxidDropdown, setShowWxidDropdown] = useState(false)
+  const [isScanningWxid, setIsScanningWxid] = useState(false)
   const [cachePath, setCachePath] = useState('')
   const [imageXorKey, setImageXorKey] = useState('')
   const [imageAesKey, setImageAesKey] = useState('')
   const [exportPath, setExportPath] = useState('')
   const [defaultExportPath, setDefaultExportPath] = useState('')
-  
+
   const [isLoading, setIsLoadingState] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [isGettingKey, setIsGettingKey] = useState(false)
@@ -82,6 +97,10 @@ function SettingsPage() {
     total: number
   } | null>(null)
   const [isLoadingCacheSize, setIsLoadingCacheSize] = useState(false)
+  const [sttLanguages, setSttLanguagesState] = useState<string[]>([])
+  const [sttModelType, setSttModelType] = useState<'int8' | 'float32'>('int8')
+  const [quoteStyle, setQuoteStyle] = useState<'default' | 'wechat'>('default')
+  const [skipIntegrityCheck, setSkipIntegrityCheck] = useState(false)
 
   // 日志相关状态
   const [logFiles, setLogFiles] = useState<Array<{ name: string; size: number; mtime: Date }>>([])
@@ -109,7 +128,10 @@ function SettingsPage() {
       const savedXorKey = await configService.getImageXorKey()
       const savedAesKey = await configService.getImageAesKey()
       const savedExportPath = await configService.getExportPath()
-      
+      const savedSttLanguages = await configService.getSttLanguages()
+      const savedSttModelType = await configService.getSttModelType()
+      const savedSkipIntegrityCheck = await configService.getSkipIntegrityCheck()
+
       if (savedKey) setDecryptKey(savedKey)
       if (savedPath) setDbPath(savedPath)
       if (savedWxid) setWxid(savedWxid)
@@ -117,6 +139,16 @@ function SettingsPage() {
       if (savedXorKey) setImageXorKey(savedXorKey)
       if (savedAesKey) setImageAesKey(savedAesKey)
       if (savedExportPath) setExportPath(savedExportPath)
+      if (savedSttLanguages && savedSttLanguages.length > 0) {
+        setSttLanguagesState(savedSttLanguages)
+      } else {
+        setSttLanguagesState(['zh'])
+      }
+      setSttModelType(savedSttModelType)
+      setSkipIntegrityCheck(savedSkipIntegrityCheck)
+
+      const savedQuoteStyle = await configService.getQuoteStyle()
+      setQuoteStyle(savedQuoteStyle)
     } catch (e) {
       console.error('加载配置失败:', e)
     }
@@ -162,15 +194,15 @@ function SettingsPage() {
         window.electronAPI.log.getLogSize(),
         window.electronAPI.log.getLogLevel()
       ])
-      
+
       if (filesResult.success && filesResult.files) {
         setLogFiles(filesResult.files)
       }
-      
+
       if (sizeResult.success && sizeResult.size !== undefined) {
         setLogSize(sizeResult.size)
       }
-      
+
       if (levelResult.success && levelResult.level) {
         setCurrentLogLevel(levelResult.level)
       }
@@ -183,7 +215,7 @@ function SettingsPage() {
 
   const loadLogContent = async (filename: string) => {
     if (!filename) return
-    
+
     setIsLoadingLogContent(true)
     try {
       const result = await window.electronAPI.log.readLogFile(filename)
@@ -313,7 +345,7 @@ function SettingsPage() {
 
   const confirmClear = async () => {
     if (!showClearDialog) return
-    
+
     try {
       let result
       switch (showClearDialog.type) {
@@ -327,7 +359,7 @@ function SettingsPage() {
           result = await window.electronAPI.cache.clearConfig()
           break
       }
-      
+
       if (result.success) {
         showMessage(`${showClearDialog.title}成功`, true)
         if (showClearDialog.type === 'config') {
@@ -407,18 +439,18 @@ function SettingsPage() {
       if (result.success && result.key) {
         setDecryptKey(result.key)
         await configService.setDecryptKey(result.key)
-        
+
         // 自动检测当前登录的微信账号
         setKeyStatus('正在检测当前登录账号...')
-        
+
         // 先尝试较短的时间范围（刚登录的情况）
         let accountInfo = await window.electronAPI.wxKey.detectCurrentAccount(dbPath, 10) // 10分钟
-        
+
         // 如果没找到，尝试更长的时间范围
         if (!accountInfo) {
           accountInfo = await window.electronAPI.wxKey.detectCurrentAccount(dbPath, 60) // 1小时
         }
-        
+
         if (accountInfo) {
           setWxid(accountInfo.wxid)
           await configService.setMyWxid(accountInfo.wxid)
@@ -454,7 +486,7 @@ function SettingsPage() {
         setDbPath(result.path)
         await configService.setDbPath(result.path)
         showMessage(`自动检测成功：${result.path}`, true)
-        
+
         const wxids = await window.electronAPI.dbPath.scanWxids(result.path)
         if (wxids.length === 1) {
           setWxid(wxids[0])
@@ -521,6 +553,48 @@ function SettingsPage() {
     }
   }
 
+  // 扫描 wxid
+  const handleScanWxid = async () => {
+    if (!dbPath) {
+      showMessage('请先配置数据库路径', false)
+      return
+    }
+    if (isScanningWxid) return
+
+    setIsScanningWxid(true)
+    try {
+      const wxids = await window.electronAPI.dbPath.scanWxids(dbPath)
+      if (wxids.length === 0) {
+        showMessage('未检测到账号目录（需包含 db_storage 文件夹）', false)
+        setWxidOptions([])
+      } else if (wxids.length === 1) {
+        // 只有一个账号，直接设置
+        setWxid(wxids[0])
+        await configService.setMyWxid(wxids[0])
+        showMessage(`已检测到账号：${wxids[0]}`, true)
+        setWxidOptions([])
+        setShowWxidDropdown(false)
+      } else {
+        // 多个账号，显示选择下拉框
+        setWxidOptions(wxids)
+        setShowWxidDropdown(true)
+        showMessage(`检测到 ${wxids.length} 个账号，请选择`, true)
+      }
+    } catch (e) {
+      showMessage(`扫描失败: ${e}`, false)
+    } finally {
+      setIsScanningWxid(false)
+    }
+  }
+
+  // 选择 wxid
+  const handleSelectWxid = async (selectedWxid: string) => {
+    setWxid(selectedWxid)
+    await configService.setMyWxid(selectedWxid)
+    setShowWxidDropdown(false)
+    showMessage(`已选择账号：${selectedWxid}`, true)
+  }
+
   const handleTestConnection = async () => {
     if (!dbPath) { showMessage('请先选择数据库目录', false); return }
     if (!decryptKey) { showMessage('请先输入解密密钥', false); return }
@@ -552,28 +626,26 @@ function SettingsPage() {
       if (dbPath) await configService.setDbPath(dbPath)
       if (wxid) await configService.setMyWxid(wxid)
       await configService.setCachePath(cachePath)
-      
+
       // 保存图片密钥（包括空值）
       await configService.setImageXorKey(imageXorKey)
       await configService.setImageAesKey(imageAesKey)
-      
+
       // 保存导出路径
       if (exportPath) await configService.setExportPath(exportPath)
 
-      // 如果数据库配置完整，测试连接
-      if (decryptKey && dbPath && wxid && decryptKey.length === 64) {
-        showMessage('配置保存成功，正在测试连接...', true)
-        const result = await window.electronAPI.wcdb.testConnection(dbPath, decryptKey, wxid, true) // 标记为自动连接
+      // 保存完整性检查设置
+      await configService.setSkipIntegrityCheck(skipIntegrityCheck)
 
-        if (result.success) {
-          setDbConnected(true, dbPath)
-          showMessage('配置保存成功！数据库连接正常', true)
-        } else {
-          showMessage('配置已保存，但数据库连接失败：' + (result.error || ''), false)
-        }
-      } else {
-        showMessage('配置保存成功', true)
+      // 保存引用样式
+      await configService.setQuoteStyle(quoteStyle)
+
+      // 如果数据库配置完整，尝试设置已连接状态（不进行耗时测试，仅标记）
+      if (decryptKey && dbPath && wxid && decryptKey.length === 64) {
+        setDbConnected(true, dbPath)
       }
+
+      showMessage('配置保存成功', true)
     } catch (e) {
       showMessage(`保存配置失败: ${e}`, false)
     } finally {
@@ -606,11 +678,65 @@ function SettingsPage() {
           </div>
         ))}
       </div>
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>引用消息样式</h3>
+      <div className="quote-style-options">
+        <label className={`radio-label ${quoteStyle === 'default' ? 'active' : ''}`}>
+          <input
+            type="radio"
+            name="quoteStyle"
+            value="default"
+            checked={quoteStyle === 'default'}
+            onChange={() => setQuoteStyle('default')}
+          />
+          <div className="radio-content">
+            <span className="radio-title">经典样式</span>
+            <div className="style-preview">
+              <div className="preview-bubble default">
+                <div className="preview-quote">
+                  张三: 那天去爬山的照片...
+                </div>
+                <div className="preview-text">
+                  拍得真不错！
+                </div>
+              </div>
+              <img src="./logo.png" className="preview-avatar" alt="我" />
+            </div>
+          </div>
+        </label>
+
+        <label className={`radio-label ${quoteStyle === 'wechat' ? 'active' : ''}`}>
+          <input
+            type="radio"
+            name="quoteStyle"
+            value="wechat"
+            checked={quoteStyle === 'wechat'}
+            onChange={() => setQuoteStyle('wechat')}
+          />
+          <div className="radio-content">
+            <span className="radio-title">新版样式</span>
+            <div className="style-preview">
+              <div className="preview-group">
+                <div className="preview-bubble wechat">
+                  拍得真不错！
+                </div>
+                <div className="preview-quote-bubble">
+                  张三: 那天去爬山的照片...
+                </div>
+              </div>
+              <img src="./logo.png" className="preview-avatar" alt="我" />
+            </div>
+          </div>
+        </label>
+      </div>
     </div>
   )
 
   const renderDatabaseTab = () => (
     <div className="tab-content">
+      {/* 数据库解密部分 */}
+      <h3 className="section-title">数据库解密</h3>
+
       <div className="form-group">
         <label>解密密钥</label>
         <span className="form-hint">64位十六进制密钥</span>
@@ -643,9 +769,39 @@ function SettingsPage() {
 
       <div className="form-group">
         <label>账号 wxid</label>
-        <span className="form-hint">微信账号标识</span>
-        <input type="text" placeholder="例如: wxid_xxxxxx" value={wxid} onChange={(e) => setWxid(e.target.value)} />
-        <button className="btn btn-secondary btn-sm"><Search size={14} /> 扫描 wxid</button>
+        <span className="form-hint">微信账号标识（只包含 db_storage 子目录的文件夹会被识别）</span>
+        <input
+          type="text"
+          placeholder="例如: wxid_xxxxxx"
+          value={wxid}
+          onChange={(e) => setWxid(e.target.value)}
+        />
+        <div className="btn-row">
+          <button className="btn btn-secondary" onClick={handleScanWxid} disabled={isScanningWxid}>
+            <Search size={16} /> {isScanningWxid ? '扫描中...' : '扫描 wxid'}
+          </button>
+        </div>
+
+        {/* 多账号选择列表 */}
+        {showWxidDropdown && wxidOptions.length > 1 && (
+          <>
+            <div className="wxid-backdrop" onClick={() => setShowWxidDropdown(false)} />
+            <div className="wxid-select-list">
+              <div className="wxid-select-header">
+                <span>检测到 {wxidOptions.length} 个账号，请选择：</span>
+              </div>
+              {wxidOptions.map((opt) => (
+                <div
+                  key={opt}
+                  className={`wxid-select-item ${opt === wxid ? 'active' : ''}`}
+                  onClick={() => handleSelectWxid(opt)}
+                >
+                  {opt}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="form-group">
@@ -657,6 +813,63 @@ function SettingsPage() {
           <button className="btn btn-secondary" onClick={() => setCachePath('')}><RotateCcw size={16} /> 恢复默认</button>
         </div>
       </div>
+
+      <div className="form-group">
+        <div className="toggle-setting">
+          <div className="toggle-header">
+            <label className="toggle-label">
+              <span className="toggle-title">跳过数据库完整性检查</span>
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={skipIntegrityCheck}
+                  onChange={(e) => setSkipIntegrityCheck(e.target.checked)}
+                />
+                <span className="toggle-slider"></span>
+              </span>
+            </label>
+          </div>
+          <div className="toggle-description">
+            <p>启用后将跳过更新时的数据库完整性验证，可以加快更新速度并减少界面卡顿。</p>
+            <p className="toggle-warning">
+              <AlertCircle size={14} />
+              注意：关闭完整性检查可能会错过损坏的数据库文件。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* 图片解密部分 */}
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>图片解密</h3>
+      <p className="section-desc">您只负责获取密钥，其他的交给密语-CipherTalk</p>
+
+      <div className="form-group">
+        <label>XOR 密钥</label>
+        <span className="form-hint">2位十六进制，如 0x53</span>
+        <div className="input-with-toggle">
+          <input type={showXorKey ? 'text' : 'password'} placeholder="例如: 0x12" value={imageXorKey} onChange={(e) => setImageXorKey(e.target.value)} />
+          <button type="button" className="toggle-visibility" onClick={() => setShowXorKey(!showXorKey)}>
+            {showXorKey ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label>AES 密钥</label>
+        <span className="form-hint">至少16个字符（V4版本图片需要）</span>
+        <div className="input-with-toggle">
+          <input type={showAesKey ? 'text' : 'password'} placeholder="例如: b123456789012345..." value={imageAesKey} onChange={(e) => setImageAesKey(e.target.value)} />
+          <button type="button" className="toggle-visibility" onClick={() => setShowAesKey(!showAesKey)}>
+            {showAesKey ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
+      </div>
+
+      {imageKeyStatus && <p className="key-status">{imageKeyStatus}</p>}
+
+      <button className="btn btn-primary" onClick={handleGetImageKey} disabled={isGettingImageKey}>
+        <ImageIcon size={16} /> {isGettingImageKey ? '获取中...' : '自动获取图片密钥'}
+      </button>
     </div>
   )
 
@@ -720,121 +933,332 @@ function SettingsPage() {
     }
   }
 
-  const renderImageTab = () => (
+  // ========== 语音转文字 (STT) 相关状态 ==========
+  const [sttModelStatus, setSttModelStatus] = useState<{ exists: boolean; sizeBytes?: number } | null>(null)
+  const [isLoadingSttStatus, setIsLoadingSttStatus] = useState(false)
+  const [isDownloadingSttModel, setIsDownloadingSttModel] = useState(false)
+  const [sttDownloadProgress, setSttDownloadProgress] = useState(0)
+
+  // 加载 STT 模型状态
+  useEffect(() => {
+    if (activeTab === 'stt') {
+      loadSttModelStatus()
+    }
+  }, [activeTab])
+
+  // 监听 STT 下载进度
+  useEffect(() => {
+    const removeListener = window.electronAPI.stt.onDownloadProgress((progress) => {
+      setSttDownloadProgress(progress.percent || 0)
+    })
+    return () => removeListener()
+  }, [])
+
+  const loadSttModelStatus = async () => {
+    setIsLoadingSttStatus(true)
+    try {
+      const result = await window.electronAPI.stt.getModelStatus()
+      if (result.success) {
+        setSttModelStatus({
+          exists: result.exists || false,
+          sizeBytes: result.sizeBytes
+        })
+      }
+    } catch (e) {
+      console.error('获取 STT 模型状态失败:', e)
+    } finally {
+      setIsLoadingSttStatus(false)
+    }
+  }
+
+  const handleDownloadSttModel = async () => {
+    if (isDownloadingSttModel) return
+    setIsDownloadingSttModel(true)
+    setSttDownloadProgress(0)
+
+    try {
+      showMessage('正在下载语音识别模型...', true)
+      const result = await window.electronAPI.stt.downloadModel()
+      if (result.success) {
+        showMessage('语音识别模型下载完成！', true)
+        await loadSttModelStatus()
+      } else {
+        showMessage(result.error || '模型下载失败', false)
+      }
+    } catch (e) {
+      showMessage(`模型下载失败: ${e}`, false)
+    } finally {
+      setIsDownloadingSttModel(false)
+    }
+  }
+
+  const handleSttLanguageToggle = async (lang: string) => {
+    if (sttLanguages.includes(lang) && sttLanguages.length === 1) {
+      showMessage('必须至少选择一种语言', false)
+      return
+    }
+
+    const newLangs = sttLanguages.includes(lang)
+      ? sttLanguages.filter(l => l !== lang)
+      : [...sttLanguages, lang]
+    setSttLanguagesState(newLangs)
+    await configService.setSttLanguages(newLangs)
+  }
+
+  const handleSttModelTypeChange = async (type: 'int8' | 'float32') => {
+    if (type === sttModelType) return
+
+    // 如果已下载模型，切换类型需要重新下载
+    if (sttModelStatus?.exists) {
+      const confirmSwitch = confirm(
+        `切换模型类型需要重新下载模型。\n\n` +
+        `当前: ${sttModelTypeOptions.find(o => o.value === sttModelType)?.label}\n` +
+        `切换到: ${sttModelTypeOptions.find(o => o.value === type)?.label} (${sttModelTypeOptions.find(o => o.value === type)?.size})\n\n` +
+        `确定要切换吗？`
+      )
+      if (!confirmSwitch) return
+
+      // 清除当前模型
+      try {
+        await window.electronAPI.stt.clearModel()
+      } catch (e) {
+        console.error('清除模型失败:', e)
+      }
+    }
+
+    setSttModelType(type)
+    await configService.setSttModelType(type)
+    await loadSttModelStatus()
+    showMessage(`模型类型已切换为 ${sttModelTypeOptions.find(o => o.value === type)?.label}`, true)
+  }
+
+  const renderSttTab = () => (
     <div className="tab-content">
-      <p className="section-desc">您只负责获取密钥，其他的交给密语-CipherTalk</p>
-      
-      <div className="form-group">
-        <label>XOR 密钥</label>
-        <span className="form-hint">2位十六进制，如 0x53</span>
-        <div className="input-with-toggle">
-          <input type={showXorKey ? 'text' : 'password'} placeholder="例如: 0x12" value={imageXorKey} onChange={(e) => setImageXorKey(e.target.value)} />
-          <button type="button" className="toggle-visibility" onClick={() => setShowXorKey(!showXorKey)}>
-            {showXorKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        </div>
+      <h3 className="section-title">语音识别模型</h3>
+      <p className="section-desc">
+        使用 SenseVoice 模型进行本地离线语音转文字，支持中文、英语、日语、韩语、粤语。
+        选择合适的模型版本后下载，仅需下载一次。
+      </p>
+
+      <h4 className="subsection-title" style={{ marginTop: '1rem', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: 500 }}>模型版本</h4>
+      <div className="model-type-grid">
+        {sttModelTypeOptions.map(opt => (
+          <label
+            key={opt.value}
+            className={`model-card ${sttModelType === opt.value ? 'active' : ''} ${isDownloadingSttModel ? 'disabled' : ''}`}
+          >
+            <input
+              type="radio"
+              name="sttModelType"
+              value={opt.value}
+              checked={sttModelType === opt.value}
+              onChange={() => handleSttModelTypeChange(opt.value as 'int8' | 'float32')}
+              disabled={isDownloadingSttModel}
+            />
+            <div className="model-icon">
+              {opt.value === 'int8' ? <Zap size={24} /> : <Layers size={24} />}
+            </div>
+            <div className="model-info">
+              <div className="model-header">
+                <span className="model-name">{opt.label}</span>
+                <span className="model-size">{opt.size}</span>
+              </div>
+              <span className="model-desc">{opt.desc}</span>
+            </div>
+            {sttModelType === opt.value && <div className="model-check"><Check size={14} /></div>}
+          </label>
+        ))}
       </div>
 
-      <div className="form-group">
-        <label>AES 密钥</label>
-        <span className="form-hint">至少16个字符（V4版本图片需要）</span>
-        <div className="input-with-toggle">
-          <input type={showAesKey ? 'text' : 'password'} placeholder="例如: b123456789012345..." value={imageAesKey} onChange={(e) => setImageAesKey(e.target.value)} />
-          <button type="button" className="toggle-visibility" onClick={() => setShowAesKey(!showAesKey)}>
-            {showAesKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        </div>
-      </div>
-
-      {imageKeyStatus && <p className="key-status">{imageKeyStatus}</p>}
-
-      <button className="btn btn-primary" onClick={handleGetImageKey} disabled={isGettingImageKey}>
-        <ImageIcon size={16} /> {isGettingImageKey ? '获取中...' : '自动获取图片密钥'}
-      </button>
-    </div>
-  )
-
-  const renderExportTab = () => (
-    <div className="tab-content">
-      <div className="form-group">
-        <label>导出目录</label>
-        <span className="form-hint">聊天记录导出的默认保存位置</span>
-        <input type="text" placeholder={defaultExportPath || '系统下载目录'} value={exportPath || defaultExportPath} onChange={(e) => setExportPath(e.target.value)} />
-        <div className="btn-row">
-          <button className="btn btn-secondary" onClick={handleSelectExportPath}><FolderOpen size={16} /> 浏览选择</button>
-          <button className="btn btn-secondary" onClick={handleResetExportPath}><RotateCcw size={16} /> 恢复默认</button>
-        </div>
-      </div>
-    </div>
-  )
-
-  const renderCacheTab = () => (
-    <div className="tab-content">
-      <p className="section-desc">管理应用缓存数据</p>
-      
-      {/* 缓存大小显示 */}
-      <div className="cache-size-info">
-        <div className="cache-header">
-          <h3>缓存占用</h3>
-          <button className="btn btn-secondary btn-sm" onClick={loadCacheSize} disabled={isLoadingCacheSize}>
-            <RefreshCw size={14} className={isLoadingCacheSize ? 'spin' : ''} />
-            刷新
-          </button>
-        </div>
-        {isLoadingCacheSize ? (
-          <p>正在计算...</p>
-        ) : cacheSize ? (
-          <div className="cache-items">
-            <div className="cache-item">
-              <span className="cache-label">图片缓存:</span>
-              <span className="cache-value">{formatFileSize(cacheSize.images)}</span>
+      <div className="stt-model-status">
+        {isLoadingSttStatus ? (
+          <p>正在检查模型状态...</p>
+        ) : sttModelStatus ? (
+          <div className="model-info">
+            <div className={`status-indicator ${sttModelStatus.exists ? 'ready' : 'missing'}`}>
+              {sttModelStatus.exists ? (
+                <>
+                  <CheckCircle size={20} />
+                  <span>模型已就绪</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle size={20} />
+                  <span>模型未下载</span>
+                </>
+              )}
             </div>
-            <div className="cache-item">
-              <span className="cache-label">表情包缓存:</span>
-              <span className="cache-value">{formatFileSize(cacheSize.emojis)}</span>
-            </div>
-            <div className="cache-item">
-              <span className="cache-label">数据库文件:</span>
-              <span className="cache-value">{formatFileSize(cacheSize.databases)}</span>
-            </div>
-            <div className="cache-item">
-              <span className="cache-label">日志文件:</span>
-              <span className="cache-value">{formatFileSize(cacheSize.logs)}</span>
-            </div>
-            <div className="cache-item total">
-              <span className="cache-label">总计:</span>
-              <span className="cache-value">{formatFileSize(cacheSize.total)}</span>
-            </div>
+            {sttModelStatus.exists && sttModelStatus.sizeBytes && (
+              <p className="model-size">模型大小: {formatFileSize(sttModelStatus.sizeBytes)}</p>
+            )}
           </div>
         ) : (
-          <p>无法获取缓存信息</p>
+          <p>无法获取模型状态</p>
         )}
       </div>
 
-      <div className="btn-row">
-        <button className="btn btn-secondary" onClick={handleClearImages}>
-          <Trash2 size={16} /> 清除图片
-        </button>
-        <button className="btn btn-secondary" onClick={handleClearConfig}>
-          <Trash2 size={16} /> 清除配置
-        </button>
-        <button className="btn btn-danger" onClick={handleClearAllCache}>
-          <Trash2 size={16} /> 清除缓存
+      {isDownloadingSttModel && (
+        <div className="download-progress">
+          <div className="progress-bar">
+            <div className="progress-fill" style={{ width: `${sttDownloadProgress}%` }} />
+          </div>
+          <span className="progress-text">{sttDownloadProgress.toFixed(1)}%</span>
+        </div>
+      )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>支持语言</h3>
+      <p className="section-desc">选择需要识别的语言，支持多选。若选择多种语言，模型将自动检测。</p>
+      <div className="language-grid">
+        {sttLanguageOptions.map(opt => (
+          <label
+            key={opt.value}
+            className={`language-card ${sttLanguages.includes(opt.value) ? 'active' : ''}`}
+          >
+            <input
+              type="checkbox"
+              checked={sttLanguages.includes(opt.value)}
+              onChange={() => handleSttLanguageToggle(opt.value)}
+              disabled={sttLanguages.includes(opt.value) && sttLanguages.length === 1}
+            />
+            <div className="lang-info">
+              <span className="lang-name">{opt.label}</span>
+              <span className="lang-en">{opt.enLabel}</span>
+            </div>
+            {sttLanguages.includes(opt.value) && <div className="lang-check"><Check size={14} /></div>}
+          </label>
+        ))}
+      </div>
+
+      <div className="btn-row" style={{ marginTop: '1rem' }}>
+        {!sttModelStatus?.exists && (
+          <button
+            className="btn btn-primary"
+            onClick={handleDownloadSttModel}
+            disabled={isDownloadingSttModel}
+          >
+            <Download size={16} /> {isDownloadingSttModel ? '下载中...' : '下载模型'}
+          </button>
+        )}
+        {sttModelStatus?.exists && (
+          <button
+            className="btn btn-danger"
+            onClick={async () => {
+              const currentModelSize = sttModelTypeOptions.find(o => o.value === sttModelType)?.size || '235 MB'
+              if (confirm(`确定要清除语音识别模型吗？下次使用需要重新下载 (${currentModelSize})。`)) {
+                try {
+                  const result = await window.electronAPI.stt.clearModel()
+                  if (result.success) {
+                    showMessage('模型清除成功', true)
+                    await loadSttModelStatus()
+                  } else {
+                    showMessage(result.error || '模型清除失败', false)
+                  }
+                } catch (e) {
+                  showMessage(`模型清除失败: ${e}`, false)
+                }
+              }
+            }}
+          >
+            <Trash2 size={16} /> 清除模型
+          </button>
+        )}
+        <button
+          className="btn btn-secondary"
+          onClick={loadSttModelStatus}
+          disabled={isLoadingSttStatus}
+        >
+          <RefreshCw size={16} className={isLoadingSttStatus ? 'spin' : ''} /> 刷新状态
         </button>
       </div>
-    </div>
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>使用说明</h3>
+      <div className="stt-instructions">
+        <ol>
+          <li>首先下载语音识别模型（仅需一次）</li>
+          <li>在聊天记录中点击语音消息</li>
+          <li>点击"转文字"按钮即可将语音转换为文字</li>
+        </ol>
+        <p className="note">
+          <strong>注意：</strong>所有语音识别均在本地完成，不会上传任何数据，保护您的隐私。
+        </p>
+      </div>
+    </div >
   )
 
-  const renderLogsTab = () => (
+  const renderDataManagementTab = () => (
     <div className="tab-content">
-      <p className="section-desc">查看和管理应用日志</p>
-      
-      {/* 日志级别设置 */}
-      <div className="log-level-setting">
+      {/* 导出设置 */}
+      <section className="settings-section">
+        <h3 className="section-title">导出设置</h3>
         <div className="form-group">
-          <label>日志级别</label>
-          <span className="form-hint">选择要记录的最低日志级别</span>
-          <div className="log-level-options">
+          <label>导出目录</label>
+          <span className="form-hint">聊天记录导出的默认保存位置</span>
+          <input type="text" placeholder={defaultExportPath || '系统下载目录'} value={exportPath || defaultExportPath} onChange={(e) => setExportPath(e.target.value)} />
+          <div className="btn-row">
+            <button className="btn btn-secondary" onClick={handleSelectExportPath}><FolderOpen size={16} /> 浏览选择</button>
+            <button className="btn btn-secondary" onClick={handleResetExportPath}><RotateCcw size={16} /> 恢复默认</button>
+          </div>
+        </div>
+      </section>
+
+      <div className="divider" style={{ margin: '2rem 0', borderBottom: '1px solid var(--border-color)', opacity: 0.1 }} />
+
+      {/* 缓存管理 */}
+      <section className="settings-section">
+        <h3 className="section-title">缓存管理</h3>
+        <div className="cache-stats">
+          {isLoadingCacheSize ? (
+            <p>正在计算缓存大小...</p>
+          ) : cacheSize ? (
+            <div className="cache-info">
+              <div className="cache-item">
+                <span className="label">图片缓存:</span>
+                <span className="value">{formatFileSize(cacheSize.images)}</span>
+              </div>
+              <div className="cache-item">
+                <span className="label">表情包缓存:</span>
+                <span className="value">{formatFileSize(cacheSize.emojis)}</span>
+              </div>
+              <div className="cache-item">
+                <span className="label">数据库缓存:</span>
+                <span className="value">{formatFileSize(cacheSize.databases)}</span>
+              </div>
+              <div className="cache-item total">
+                <span className="label">总计:</span>
+                <span className="value">{formatFileSize(cacheSize.total)}</span>
+              </div>
+            </div>
+          ) : (
+            <p>无法获取缓存信息</p>
+          )}
+        </div>
+        <div className="btn-row">
+          <button className="btn btn-secondary" onClick={handleClearImages}>
+            <Trash2 size={16} /> 清除图片
+          </button>
+          <button className="btn btn-secondary" onClick={handleClearConfig}>
+            <Trash2 size={16} /> 清除配置
+          </button>
+          <button className="btn btn-danger" onClick={handleClearAllCache}>
+            <Trash2 size={16} /> 清除所有缓存
+          </button>
+        </div>
+      </section>
+
+      <div className="divider" style={{ margin: '2rem 0', borderBottom: '1px solid var(--border-color)', opacity: 0.1 }} />
+
+      {/* 日志管理 */}
+      <section className="settings-section">
+        <h3 className="section-title">日志管理</h3>
+
+        <div className="form-group">
+          <div className="log-stats-lite" style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1rem' }}>
+            <span className="log-value">日志文件: {logFiles.length}个</span>
+            <span className="log-value">总大小: {formatFileSize(logSize)}</span>
+            <span className="log-value">当前级别: {currentLogLevel}</span>
+          </div>
+
+          <div className="log-level-options" style={{ marginBottom: '1rem' }}>
             {['DEBUG', 'INFO', 'WARN', 'ERROR'].map((level) => (
               <button
                 key={level}
@@ -845,97 +1269,58 @@ function SettingsPage() {
               </button>
             ))}
           </div>
-          <div className="log-level-desc">
-            <small>
-              {currentLogLevel === 'DEBUG' && '记录所有日志（调试、信息、警告、错误）'}
-              {currentLogLevel === 'INFO' && '记录信息、警告和错误日志'}
-              {currentLogLevel === 'WARN' && '仅记录警告和错误日志（推荐）'}
-              {currentLogLevel === 'ERROR' && '仅记录错误日志'}
-            </small>
-          </div>
-        </div>
-      </div>
-      
-      {/* 日志统计 */}
-      <div className="log-stats">
-        <div className="log-header">
-          <h3>日志统计</h3>
-          <button className="btn btn-secondary btn-sm" onClick={loadLogFiles} disabled={isLoadingLogs}>
-            <RefreshCw size={14} className={isLoadingLogs ? 'spin' : ''} />
-            刷新
-          </button>
-        </div>
-        <div className="log-info">
-          <div className="log-item">
-            <span className="log-label">日志文件数:</span>
-            <span className="log-value">{logFiles.length} 个</span>
-          </div>
-          <div className="log-item">
-            <span className="log-label">总大小:</span>
-            <span className="log-value">{formatFileSize(logSize)}</span>
-          </div>
-          <div className="log-item">
-            <span className="log-label">当前级别:</span>
-            <span className="log-value">{currentLogLevel}</span>
-          </div>
-        </div>
-      </div>
 
-      {/* 日志文件列表 */}
-      <div className="log-files">
-        <h4>日志文件</h4>
-        {isLoadingLogs ? (
-          <p>正在加载...</p>
-        ) : logFiles.length > 0 ? (
-          <div className="log-file-list">
-            {logFiles.map((file) => (
-              <div 
-                key={file.name} 
-                className={`log-file-item ${selectedLogFile === file.name ? 'selected' : ''}`}
-                onClick={() => handleLogFileSelect(file.name)}
-              >
-                <div className="log-file-info">
-                  <span className="log-file-name">{file.name}</span>
-                  <span className="log-file-size">{formatFileSize(file.size)}</span>
-                </div>
-                <div className="log-file-date">
-                  {new Date(file.mtime).toLocaleString('zh-CN')}
-                </div>
-              </div>
-            ))}
+          <div className="btn-row">
+            <button className="btn btn-secondary" onClick={handleOpenLogDirectory}>
+              <FolderOpen size={16} /> 打开日志目录
+            </button>
+            <button className="btn btn-secondary" onClick={loadLogFiles} disabled={isLoadingLogs}>
+              <RefreshCw size={16} className={isLoadingLogs ? 'spin' : ''} /> 刷新
+            </button>
+            <button className="btn btn-danger" onClick={handleClearLogs}>
+              <Trash2 size={16} /> 清除所有日志
+            </button>
           </div>
-        ) : (
-          <p>暂无日志文件</p>
-        )}
-      </div>
+        </div>
 
-      {/* 日志内容 */}
-      {selectedLogFile && (
-        <div className="log-content">
-          <div className="log-content-header">
-            <h4>日志内容 - {selectedLogFile}</h4>
-          </div>
-          {isLoadingLogContent ? (
+        <div className="log-files" style={{ marginTop: '1rem' }}>
+          <h4>最近日志</h4>
+          {isLoadingLogs ? (
             <p>正在加载...</p>
-          ) : (
-            <div className="log-content-text">
-              <pre>{logContent}</pre>
+          ) : logFiles.length > 0 ? (
+            <div className="log-file-list" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+              {logFiles.map((file) => (
+                <div
+                  key={file.name}
+                  className={`log-file-item ${selectedLogFile === file.name ? 'selected' : ''}`}
+                  onClick={() => handleLogFileSelect(file.name)}
+                >
+                  <div className="log-file-info">
+                    <span className="log-file-name">{file.name}</span>
+                    <span className="log-file-size">{formatFileSize(file.size)}</span>
+                  </div>
+                </div>
+              ))}
             </div>
+          ) : (
+            <p>暂无日志文件</p>
           )}
         </div>
-      )}
 
-      {/* 操作按钮 */}
-      <div className="btn-row">
-        <button className="btn btn-secondary" onClick={handleOpenLogDirectory}>
-          <FolderOpen size={16} /> 打开日志目录
-        </button>
-        <button className="btn btn-danger" onClick={handleClearLogs}>
-          <Trash2 size={16} /> 清除所有日志
-        </button>
-      </div>
+        {selectedLogFile && (
+          <div className="log-content" style={{ marginTop: '1rem' }}>
+            <div className="log-content-text" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+              <pre>{logContent}</pre>
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   )
+
+
+
+
 
   const getTypeDisplayName = (type: string | null) => {
     if (!type) return '未激活'
@@ -975,8 +1360,8 @@ function SettingsPage() {
               {activationStatus.daysRemaining !== null && activationStatus.type !== 'permanent' && (
                 <p className="status-expires">
                   <Clock size={14} />
-                  {activationStatus.daysRemaining > 0 
-                    ? `剩余 ${activationStatus.daysRemaining} 天` 
+                  {activationStatus.daysRemaining > 0
+                    ? `剩余 ${activationStatus.daysRemaining} 天`
                     : '已过期'}
                 </p>
               )}
@@ -1019,7 +1404,7 @@ function SettingsPage() {
         <h2 className="about-name">密语</h2>
         <p className="about-slogan">CipherTalk</p>
         <p className="about-version">v{appVersion || '...'}</p>
-        
+
         <div className="about-update">
           {updateInfo?.hasUpdate ? (
             <>
@@ -1058,7 +1443,7 @@ function SettingsPage() {
           <span>·</span>
           <a href="#" onClick={(e) => { e.preventDefault(); window.electronAPI.window.openAgreementWindow() }}>用户协议</a>
         </div>
-        <p className="copyright">© 2025 密语-CipherTalk. All rights reserved.</p>
+        <p className="copyright">© {new Date().getFullYear()} 密语-CipherTalk. All rights reserved.</p>
       </div>
     </div>
   )
@@ -1074,14 +1459,14 @@ function SettingsPage() {
             <h3>{showClearDialog.title}</h3>
             <p>{showClearDialog.message}</p>
             <div className="dialog-actions">
-              <button 
-                className="btn btn-danger" 
+              <button
+                className="btn btn-danger"
                 onClick={confirmClear}
               >
                 确定
               </button>
-              <button 
-                className="btn btn-secondary dialog-cancel" 
+              <button
+                className="btn btn-secondary dialog-cancel"
                 onClick={() => setShowClearDialog(null)}
               >
                 取消
@@ -1115,10 +1500,8 @@ function SettingsPage() {
       <div className="settings-body">
         {activeTab === 'appearance' && renderAppearanceTab()}
         {activeTab === 'database' && renderDatabaseTab()}
-        {activeTab === 'image' && renderImageTab()}
-        {activeTab === 'export' && renderExportTab()}
-        {activeTab === 'cache' && renderCacheTab()}
-        {activeTab === 'logs' && renderLogsTab()}
+        {activeTab === 'stt' && renderSttTab()}
+        {activeTab === 'data' && renderDataManagementTab()}
         {activeTab === 'activation' && renderActivationTab()}
         {activeTab === 'about' && renderAboutTab()}
       </div>
