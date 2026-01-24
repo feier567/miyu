@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/welcome.png" alt="密语 CipherTalk" width="100%" />
+<img src="welcome.png" alt="密语 CipherTalk" width="100%" />
 
 # 🔐 密语 CipherTalk
 
